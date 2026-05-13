@@ -1,0 +1,801 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ancient Mysteries Studio Pro</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/docx/8.5.0/docx.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #070707; color: #e8e0d0; font-family: Georgia, serif; }
+    @keyframes pulse { 0%,100%{opacity:0.3} 50%{opacity:1} }
+    @keyframes slideIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+    textarea:focus, input:focus, select:focus { outline: none; }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #111; }
+    ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    const SYSTEM_PROMPT_SHORT = `You are a professional faceless YouTube/Facebook content writer specializing in ancient mysteries, lost civilizations, and unexplained phenomena. Your target audience is English-speaking viewers in the US and Europe.
+
+Given a topic, generate a complete video production package in JSON format ONLY. No markdown, no explanation, no code fences, just raw JSON.
+
+{
+  "title": "Compelling YouTube/Facebook video title",
+  "hook": "First 2 sentences — shocking or intriguing, stops the scroll",
+  "script": "Full narration, 60-90 seconds aloud (~150-200 words). Mysterious, dramatic tone. Use '...' for pauses.",
+  "facebook_caption": "Facebook caption with emojis, 3-4 sentences, ends with a question",
+  "scenes": [
+    {
+      "id": 1,
+      "timestamp": "0:00 - 0:10",
+      "narration_excerpt": "The script excerpt for this scene",
+      "image_prompt": "Hyper-detailed prompt for AI image generation. Photorealistic, cinematic, 16:9, dramatic lighting.",
+      "video_motion_prompt": "Motion instruction for Grok/Veo. Camera movement + subtle scene motion."
+    }
+  ],
+  "tags": ["10", "relevant", "hashtags"]
+}
+
+Generate exactly 5 scenes. Documentary feel. Be specific in all prompts.`;
+
+    const SYSTEM_PROMPT_LONG = `You are a professional faceless YouTube content writer specializing in ancient mysteries, lost civilizations, and unexplained phenomena. Your target audience is English-speaking viewers in the US and Europe.
+
+Given a topic, generate a LONG-FORM video production package (8-12 minutes) in JSON format ONLY. No markdown, no explanation, no code fences, just raw JSON.
+
+{
+  "title": "In-depth YouTube title for long-form content",
+  "hook": "First 2-3 sentences — compelling opening for deep-dive",
+  "script": "Full narration, 8-12 minutes aloud (~1800-2400 words). Mysterious, dramatic, engaging. Structure: hook → context → evidence → mystery → conclusion. Use '...' for pauses. Include section breaks like [SECTION: Evidence].",
+  "facebook_caption": "Facebook caption with emojis, 4-5 sentences, ends with engagement question",
+  "scenes": [
+    {
+      "id": 1,
+      "timestamp": "0:00 - 0:45",
+      "section": "OPENING",
+      "narration_excerpt": "The script excerpt for this scene",
+      "image_prompt": "Hyper-detailed prompt for AI image generation. Photorealistic, cinematic, 16:9, dramatic lighting.",
+      "video_motion_prompt": "Motion instruction. Camera movement + scene motion."
+    }
+  ],
+  "tags": ["12-15", "relevant", "hashtags"],
+  "thumbnail_text": "2-3 words max for thumbnail overlay"
+}
+
+Generate exactly 10-12 scenes with varied timestamps. Documentary feel. Detailed, cinematic prompts.`;
+
+    const gold = "#c9a84c";
+    const dim = "#8a7a60";
+    const bg = "#070707";
+    const border = "rgba(201,168,76,0.15)";
+    const card = "rgba(201,168,76,0.04)";
+    const mono = "'Courier New', monospace";
+
+    const MYSTERY_PRESETS = [
+      "Atlantis & Lost Continents",
+      "Egyptian Pyramids & Hidden Chambers",
+      "Nazca Lines: Alien Runways?",
+      "Stonehenge Purpose & Origins",
+      "Bermuda Triangle Disappearances",
+      "Göbekli Tepe: Pre-Civilization Temple",
+      "Easter Island Moai Construction",
+      "Voynich Manuscript Decoded",
+      "Mary Celeste Ghost Ship",
+      "Dyatlov Pass Incident",
+      "Yonaguni Monument Underwater",
+      "Puma Punku Precision Engineering"
+    ];
+
+    function App() {
+      const [apiKey, setApiKey] = useState("");
+      const [apiKeyInput, setApiKeyInput] = useState("");
+      const [showKeyPanel, setShowKeyPanel] = useState(false);
+      const [topic, setTopic] = useState("");
+      const [format, setFormat] = useState("short"); // short | medium | long
+      const [generating, setGenerating] = useState(false);
+      const [result, setResult] = useState(null);
+      const [error, setError] = useState("");
+      const [activeTab, setActiveTab] = useState("script");
+      const [copiedId, setCopiedId] = useState(null);
+      const [history, setHistory] = useState([]);
+      const [showHistory, setShowHistory] = useState(false);
+
+      // Load API key and history from localStorage
+      useEffect(() => {
+        const saved = localStorage.getItem("ams-anthropic-key");
+        if (saved) {
+          setApiKey(saved);
+          setApiKeyInput(saved);
+        } else {
+          setShowKeyPanel(true);
+        }
+        
+        const savedHistory = localStorage.getItem("ams-history");
+        if (savedHistory) {
+          setHistory(JSON.parse(savedHistory));
+        }
+      }, []);
+
+      const saveKey = () => {
+        const k = apiKeyInput.trim();
+        localStorage.setItem("ams-anthropic-key", k);
+        setApiKey(k);
+        setShowKeyPanel(false);
+      };
+
+      const copy = (text, id) => {
+        navigator.clipboard.writeText(text);
+        setCopiedId(id);
+        setTimeout(() => setCopiedId(null), 2000);
+      };
+
+      const getDuration = () => {
+        if (format === "short") return "60";
+        if (format === "medium") return "180";
+        return "600"; // long = 10 minutes
+      };
+
+      const getSystemPrompt = () => {
+        return format === "long" ? SYSTEM_PROMPT_LONG : SYSTEM_PROMPT_SHORT;
+      };
+
+      const generateScript = async () => {
+        if (!topic.trim()) return;
+        if (!apiKey) { setShowKeyPanel(true); return; }
+        setGenerating(true); 
+        setError(""); 
+        setResult(null);
+        try {
+          const duration = getDuration();
+          const res = await fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-api-key": apiKey,
+              "anthropic-version": "2023-06-01",
+              "anthropic-dangerous-direct-browser-access": "true",
+            },
+            body: JSON.stringify({
+              model: "claude-sonnet-4-5",
+              max_tokens: format === "long" ? 4000 : 2500,
+              system: getSystemPrompt(),
+              messages: [{ role: "user", content: `Topic: ${topic}\nDuration: ${duration} seconds\nFormat: ${format}` }],
+            }),
+          });
+          const data = await res.json();
+          if (data.error) throw new Error(data.error.message);
+          const text = data.content?.[0]?.text || "";
+          const parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
+          setResult(parsed);
+          
+          // Add to history
+          const newHistory = [
+            { topic, format, timestamp: new Date().toLocaleString(), data: parsed },
+            ...history.filter(h => !(h.topic === topic && h.format === format))
+          ].slice(0, 20);
+          setHistory(newHistory);
+          localStorage.setItem("ams-history", JSON.stringify(newHistory));
+          
+          setActiveTab("script");
+        } catch (e) {
+          setError("Generation failed: " + e.message);
+        } finally {
+          setGenerating(false);
+        }
+      };
+
+      const exportToWord = async () => {
+        if (!result) return;
+        
+        const sections = [];
+        
+        // Title page
+        sections.push(
+          new window.docx.Paragraph({
+            text: "ANCIENT MYSTERIES STUDIO",
+            heading: window.docx.HeadingLevel.HEADING_1,
+            spacing: { after: 200 },
+          })
+        );
+        
+        sections.push(
+          new window.docx.Paragraph({
+            text: `Topic: ${topic}`,
+            spacing: { after: 100 },
+          })
+        );
+        
+        sections.push(
+          new window.docx.Paragraph({
+            text: `Format: ${format === "short" ? "Shorts (60s)" : format === "medium" ? "Medium (3m)" : "Long-Form (10m)"}`,
+            spacing: { after: 100 },
+          })
+        );
+        
+        sections.push(
+          new window.docx.Paragraph({
+            text: `Generated: ${new Date().toLocaleString()}`,
+            spacing: { after: 400 },
+          })
+        );
+
+        // Video Title
+        sections.push(
+          new window.docx.Paragraph({
+            text: "VIDEO TITLE",
+            heading: window.docx.HeadingLevel.HEADING_2,
+            spacing: { after: 100 },
+          })
+        );
+        
+        sections.push(
+          new window.docx.Paragraph({
+            text: result.title,
+            spacing: { after: 300 },
+          })
+        );
+
+        // Hook
+        sections.push(
+          new window.docx.Paragraph({
+            text: "OPENING HOOK",
+            heading: window.docx.HeadingLevel.HEADING_2,
+            spacing: { after: 100 },
+          })
+        );
+        
+        sections.push(
+          new window.docx.Paragraph({
+            text: result.hook,
+            spacing: { after: 300 },
+            italics: true,
+          })
+        );
+
+        // Full Script
+        sections.push(
+          new window.docx.Paragraph({
+            text: "FULL NARRATION SCRIPT",
+            heading: window.docx.HeadingLevel.HEADING_2,
+            spacing: { after: 100 },
+          })
+        );
+        
+        sections.push(
+          new window.docx.Paragraph({
+            text: result.script,
+            spacing: { after: 300 },
+          })
+        );
+
+        // Scenes
+        sections.push(
+          new window.docx.Paragraph({
+            text: "SCENES & VISUAL DIRECTIONS",
+            heading: window.docx.HeadingLevel.HEADING_2,
+            spacing: { after: 100 },
+          })
+        );
+
+        result.scenes?.forEach((scene) => {
+          sections.push(
+            new window.docx.Paragraph({
+              text: `Scene ${scene.id} - ${scene.timestamp}${scene.section ? ` [${scene.section}]` : ""}`,
+              heading: window.docx.HeadingLevel.HEADING_3,
+              spacing: { after: 50 },
+            })
+          );
+          
+          sections.push(
+            new window.docx.Paragraph({
+              text: `Narration: "${scene.narration_excerpt}"`,
+              spacing: { after: 100 },
+            })
+          );
+          
+          sections.push(
+            new window.docx.Paragraph({
+              text: "Image Prompt (Copilot):",
+              bold: true,
+              spacing: { after: 50 },
+            })
+          );
+          
+          sections.push(
+            new window.docx.Paragraph({
+              text: scene.image_prompt,
+              spacing: { after: 100 },
+            })
+          );
+          
+          sections.push(
+            new window.docx.Paragraph({
+              text: "Motion Prompt (Grok):",
+              bold: true,
+              spacing: { after: 50 },
+            })
+          );
+          
+          sections.push(
+            new window.docx.Paragraph({
+              text: scene.video_motion_prompt,
+              spacing: { after: 200 },
+            })
+          );
+        });
+
+        // Social Media
+        sections.push(
+          new window.docx.Paragraph({
+            text: "SOCIAL MEDIA",
+            heading: window.docx.HeadingLevel.HEADING_2,
+            spacing: { after: 100 },
+          })
+        );
+
+        sections.push(
+          new window.docx.Paragraph({
+            text: "Facebook Caption:",
+            bold: true,
+            spacing: { after: 50 },
+          })
+        );
+
+        sections.push(
+          new window.docx.Paragraph({
+            text: result.facebook_caption,
+            spacing: { after: 200 },
+          })
+        );
+
+        sections.push(
+          new window.docx.Paragraph({
+            text: "Hashtags:",
+            bold: true,
+            spacing: { after: 50 },
+          })
+        );
+
+        sections.push(
+          new window.docx.Paragraph({
+            text: result.tags?.join(" ") || "",
+            spacing: { after: 200 },
+          })
+        );
+
+        if (result.thumbnail_text) {
+          sections.push(
+            new window.docx.Paragraph({
+              text: "Thumbnail Text:",
+              bold: true,
+              spacing: { after: 50 },
+            })
+          );
+
+          sections.push(
+            new window.docx.Paragraph({
+              text: result.thumbnail_text,
+              spacing: { after: 200 },
+            })
+          );
+        }
+
+        const doc = new window.docx.Document({
+          sections: [{
+            properties: {},
+            children: sections,
+          }],
+        });
+
+        window.docx.Packer.toBlob(doc).then((blob) => {
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `${topic.replace(/\s+/g, "-")}-${format}-${Date.now()}.docx`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+        });
+      };
+
+      const CopyBtn = ({ text, id }) => (
+        <button
+          onClick={() => copy(text, id)}
+          style={{
+            background: copiedId === id ? gold : "rgba(201,168,76,0.1)",
+            border: `1px solid ${gold}`,
+            color: copiedId === id ? bg : gold,
+            padding: "4px 12px", borderRadius: 4, fontSize: 10,
+            cursor: "pointer", fontFamily: mono, letterSpacing: "0.05em",
+            transition: "all 0.2s", flexShrink: 0,
+          }}
+        >
+          {copiedId === id ? "✓ COPIED" : "COPY"}
+        </button>
+      );
+
+      const formatLabel = format === "short" ? "Shorts (60s)" : format === "medium" ? "Medium (3m)" : "Long-Form (10m)";
+
+      return (
+        <div style={{ minHeight: "100vh", background: bg, color: "#e8e0d0", fontFamily: "Georgia, serif", backgroundImage: "radial-gradient(ellipse at 20% 20%, rgba(139,90,30,0.07) 0%, transparent 60%)" }}>
+          <style>{`
+            @keyframes slideIn { 
+              from { opacity: 0; transform: translateY(-10px); } 
+              to { opacity: 1; transform: translateY(0); } 
+            }
+            .history-item {
+              animation: slideIn 0.3s ease-out;
+            }
+          `}</style>
+
+          {/* Header */}
+          <div style={{ borderBottom: `1px solid ${border}`, padding: "20px 28px", background: card }}>
+            <div style={{ maxWidth: 1000, margin: "0 auto", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 3 }}>
+                  <span style={{ fontSize: 18, color: gold }}>◈</span>
+                  <h1 style={{ margin: 0, fontSize: 18, fontWeight: "normal", letterSpacing: "0.18em", color: gold, textTransform: "uppercase" }}>
+                    Ancient Mysteries Studio
+                  </h1>
+                  <span style={{ fontSize: 10, color: dim, fontFamily: mono, letterSpacing: "0.1em", marginLeft: 12 }}>PRO</span>
+                </div>
+                <p style={{ margin: 0, fontSize: 11, color: dim, fontFamily: mono, letterSpacing: "0.05em", marginTop: 4 }}>Faceless video generation for mysterious content</p>
+              </div>
+              <div style={{ display: "flex", gap: 12 }}>
+                <button
+                  onClick={() => setShowHistory(!showHistory)}
+                  style={{
+                    background: "rgba(201,168,76,0.1)",
+                    border: `1px solid ${gold}`,
+                    color: gold,
+                    padding: "6px 14px", borderRadius: 4, fontSize: 10,
+                    cursor: "pointer", fontFamily: mono, letterSpacing: "0.05em",
+                    transition: "all 0.2s",
+                  }}
+                >
+                  📋 HISTORY ({history.length})
+                </button>
+                <button
+                  onClick={() => setShowKeyPanel(!showKeyPanel)}
+                  style={{
+                    background: "rgba(201,168,76,0.1)",
+                    border: `1px solid ${gold}`,
+                    color: gold,
+                    padding: "6px 14px", borderRadius: 4, fontSize: 10,
+                    cursor: "pointer", fontFamily: mono, letterSpacing: "0.05em",
+                    transition: "all 0.2s",
+                  }}
+                >
+                  🔑 API KEY
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Main Content */}
+          <div style={{ maxWidth: 1000, margin: "0 auto", padding: "28px" }}>
+            {showKeyPanel && (
+              <div style={{ background: card, border: `1px solid ${border}`, borderRadius: 8, padding: "20px", marginBottom: 20 }}>
+                <div style={{ marginBottom: 12 }}>
+                  <label style={{ display: "block", fontSize: 10, color: gold, fontFamily: mono, marginBottom: 8, letterSpacing: "0.1em" }}>
+                    ANTHROPIC API KEY
+                  </label>
+                  <input
+                    type="password"
+                    value={apiKeyInput}
+                    onChange={(e) => setApiKeyInput(e.target.value)}
+                    placeholder="sk-ant-..."
+                    style={{
+                      width: "100%", padding: "10px 12px", background: "rgba(0,0,0,0.3)",
+                      border: `1px solid ${border}`, borderRadius: 4, color: "#e8e0d0",
+                      fontFamily: mono, fontSize: 12,
+                    }}
+                  />
+                </div>
+                <button
+                  onClick={saveKey}
+                  style={{
+                    background: gold, color: bg, border: "none", borderRadius: 4,
+                    padding: "8px 20px", fontSize: 11, fontFamily: mono,
+                    cursor: "pointer", fontWeight: "bold", transition: "all 0.2s",
+                  }}
+                >
+                  SAVE & CONTINUE
+                </button>
+              </div>
+            )}
+
+            {showHistory && history.length > 0 && (
+              <div style={{ background: card, border: `1px solid ${border}`, borderRadius: 8, padding: "16px", marginBottom: 20, maxHeight: "300px", overflowY: "auto" }}>
+                <div style={{ fontSize: 10, color: gold, fontFamily: mono, marginBottom: 12, letterSpacing: "0.1em" }}>
+                  GENERATION HISTORY
+                </div>
+                {history.map((item, idx) => (
+                  <div key={idx} className="history-item" style={{
+                    background: "rgba(0,0,0,0.2)", border: `1px solid ${border}`, borderRadius: 4,
+                    padding: "8px 12px", marginBottom: 8, cursor: "pointer",
+                    transition: "all 0.2s",
+                  }} onClick={() => {
+                    setTopic(item.topic);
+                    setFormat(item.format);
+                    setResult(item.data);
+                    setShowHistory(false);
+                    setActiveTab("script");
+                  }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div>
+                        <div style={{ fontSize: 12, color: "#e8e0d0" }}>{item.topic}</div>
+                        <div style={{ fontSize: 9, color: dim, marginTop: 2 }}>
+                          {item.format === "short" ? "Shorts" : item.format === "medium" ? "Medium" : "Long"} • {item.timestamp}
+                        </div>
+                      </div>
+                      <span style={{ color: dim, fontSize: 10 }}>↻</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Input Section */}
+            <div style={{ background: card, border: `1px solid ${border}`, borderRadius: 8, padding: "20px", marginBottom: 20 }}>
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: "block", fontSize: 10, color: gold, fontFamily: mono, marginBottom: 8, letterSpacing: "0.1em" }}>
+                  VIDEO FORMAT
+                </label>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  {[
+                    { value: "short", label: "📱 Shorts (60s)" },
+                    { value: "medium", label: "🎥 Medium (3m)" },
+                    { value: "long", label: "🎬 Long-Form (10m)" }
+                  ].map(opt => (
+                    <button key={opt.value}
+                      onClick={() => setFormat(opt.value)}
+                      style={{
+                        background: format === opt.value ? gold : "rgba(201,168,76,0.1)",
+                        color: format === opt.value ? bg : gold,
+                        border: `1px solid ${gold}`,
+                        padding: "8px 16px", borderRadius: 4, fontSize: 11,
+                        cursor: "pointer", fontFamily: mono, fontWeight: format === opt.value ? "bold" : "normal",
+                        transition: "all 0.2s",
+                      }}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: "block", fontSize: 10, color: gold, fontFamily: mono, marginBottom: 8, letterSpacing: "0.1em" }}>
+                  TOPIC OR SEARCH
+                </label>
+                <textarea
+                  value={topic}
+                  onChange={(e) => setTopic(e.target.value)}
+                  placeholder="e.g., Atlantis, Stonehenge, Nazca Lines..."
+                  style={{
+                    width: "100%", padding: "12px", background: "rgba(0,0,0,0.3)",
+                    border: `1px solid ${border}`, borderRadius: 4, color: "#e8e0d0",
+                    fontFamily: "Georgia, serif", fontSize: 14, minHeight: 60,
+                    resize: "vertical",
+                  }}
+                />
+              </div>
+
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: 10, color: dim, fontFamily: mono, marginBottom: 8, display: "block", letterSpacing: "0.05em" }}>
+                  QUICK PRESETS
+                </label>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {MYSTERY_PRESETS.map((preset) => (
+                    <button key={preset}
+                      onClick={() => setTopic(preset)}
+                      style={{
+                        background: "rgba(0,0,0,0.2)",
+                        border: `1px solid ${border}`,
+                        color: "#a0907a",
+                        padding: "4px 10px", borderRadius: 3, fontSize: 9,
+                        cursor: "pointer", fontFamily: mono,
+                        transition: "all 0.2s",
+                      }}
+                      onMouseOver={(e) => e.target.style.borderColor = gold}
+                      onMouseOut={(e) => e.target.style.borderColor = border}
+                    >
+                      {preset}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ display: "flex", gap: 10 }}>
+                <button
+                  onClick={generateScript}
+                  disabled={generating || !topic.trim()}
+                  style={{
+                    background: generating || !topic.trim() ? "rgba(201,168,76,0.08)" : gold,
+                    color: generating || !topic.trim() ? dim : bg,
+                    border: "none", borderRadius: 6, padding: "10px 28px",
+                    fontSize: 11, fontFamily: mono, letterSpacing: "0.15em",
+                    textTransform: "uppercase", cursor: generating || !topic.trim() ? "not-allowed" : "pointer",
+                    fontWeight: "bold", transition: "all 0.2s",
+                  }}
+                >
+                  {generating ? "◈ GENERATING..." : "◈ GENERATE SCRIPT"}
+                </button>
+                {result && (
+                  <button
+                    onClick={exportToWord}
+                    style={{
+                      background: "rgba(80,150,200,0.15)",
+                      color: "#80aae0",
+                      border: "1px solid rgba(80,150,200,0.3)",
+                      borderRadius: 6, padding: "10px 28px",
+                      fontSize: 11, fontFamily: mono, letterSpacing: "0.15em",
+                      textTransform: "uppercase", cursor: "pointer",
+                      fontWeight: "bold", transition: "all 0.2s",
+                    }}
+                  >
+                    💾 EXPORT TO WORD
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {error && (
+              <div style={{ background: "rgba(180,50,50,0.1)", border: "1px solid rgba(180,50,50,0.3)", borderRadius: 6, padding: "12px 16px", color: "#e08080", fontSize: 13, marginBottom: 18 }}>
+                {error}
+              </div>
+            )}
+
+            {generating && (
+              <div style={{ textAlign: "center", padding: "50px 20px", color: dim }}>
+                <div style={{ fontSize: 30, marginBottom: 12, animation: "pulse 2s infinite" }}>◈</div>
+                <p style={{ fontSize: 11, letterSpacing: "0.12em", fontFamily: mono }}>SUMMONING ANCIENT KNOWLEDGE...</p>
+              </div>
+            )}
+
+            {result && (
+              <div>
+                {/* Title */}
+                <div style={{ background: "rgba(201,168,76,0.06)", border: "1px solid rgba(201,168,76,0.25)", borderRadius: 8, padding: "15px 20px", marginBottom: 18, display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 14 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 9, color: dim, fontFamily: mono, letterSpacing: "0.12em", marginBottom: 5 }}>VIDEO TITLE</div>
+                    <div style={{ fontSize: 16, color: gold, lineHeight: 1.4 }}>{result.title}</div>
+                  </div>
+                  <CopyBtn text={result.title} id="title" />
+                </div>
+
+                {/* Tabs */}
+                <div style={{ display: "flex", borderBottom: `1px solid ${border}`, marginBottom: 18, flexWrap: "wrap" }}>
+                  {["script", "scenes", "social"].map((tab) => (
+                    <button
+                      key={tab}
+                      onClick={() => setActiveTab(tab)}
+                      style={{
+                        background: "none", border: "none",
+                        borderBottom: activeTab === tab ? `2px solid ${gold}` : "2px solid transparent",
+                        color: activeTab === tab ? gold : "#5a4a30",
+                        padding: "9px 22px", fontSize: 10, fontFamily: mono,
+                        letterSpacing: "0.12em", textTransform: "uppercase",
+                        cursor: "pointer", marginBottom: -1,
+                      }}
+                    >
+                      {tab === "script" ? "📜 Script" : tab === "scenes" ? "🎬 Scenes" : "📱 Social"}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Script Tab */}
+                {activeTab === "script" && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                    <div style={{ background: "rgba(201,168,76,0.07)", border: "1px solid rgba(201,168,76,0.28)", borderRadius: 8, padding: "16px 18px" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                        <span style={{ fontSize: 9, color: gold, fontFamily: mono, letterSpacing: "0.12em" }}>⚡ OPENING HOOK</span>
+                        <CopyBtn text={result.hook} id="hook" />
+                      </div>
+                      <p style={{ margin: 0, fontSize: 15, lineHeight: 1.85, fontStyle: "italic", color: "#d0c090" }}>"{result.hook}"</p>
+                    </div>
+                    <div style={{ background: "rgba(0,0,0,0.3)", border: `1px solid ${border}`, borderRadius: 8, padding: "16px 18px" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                        <span style={{ fontSize: 9, color: dim, fontFamily: mono, letterSpacing: "0.12em" }}>FULL NARRATION SCRIPT</span>
+                        <CopyBtn text={result.script} id="script" />
+                      </div>
+                      <p style={{ margin: 0, fontSize: 14, lineHeight: 1.95, color: "#c0b89a", whiteSpace: "pre-wrap" }}>{result.script}</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Scenes Tab */}
+                {activeTab === "scenes" && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                    {result.scenes?.map((scene) => (
+                      <div key={scene.id} style={{ background: "rgba(0,0,0,0.3)", border: `1px solid ${border}`, borderRadius: 8, padding: "16px 18px" }}>
+                        <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 12 }}>
+                          <span style={{ background: gold, color: bg, width: 22, height: 22, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: "bold", fontFamily: mono, flexShrink: 0 }}>
+                            {scene.id}
+                          </span>
+                          <span style={{ fontSize: 11, color: dim, fontFamily: mono }}>{scene.timestamp}</span>
+                          {scene.section && <span style={{ fontSize: 9, color: "#7090d0", background: "rgba(80,120,200,0.1)", padding: "2px 8px", borderRadius: 3, fontFamily: mono }}>
+                            {scene.section}
+                          </span>}
+                        </div>
+                        <p style={{ margin: "0 0 14px", fontSize: 13, color: "#8a8070", fontStyle: "italic", lineHeight: 1.6 }}>
+                          "{scene.narration_excerpt}"
+                        </p>
+                        <div style={{ background: "rgba(40,80,140,0.1)", border: "1px solid rgba(80,120,200,0.2)", borderRadius: 6, padding: "11px 13px", marginBottom: 10 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 7 }}>
+                            <span style={{ fontSize: 10, color: "#7090d0", fontFamily: mono }}>🖼️ IMAGE PROMPT (Copilot)</span>
+                            <CopyBtn text={scene.image_prompt} id={`img-${scene.id}`} />
+                          </div>
+                          <p style={{ margin: 0, fontSize: 12, color: "#9aaecc", lineHeight: 1.65 }}>{scene.image_prompt}</p>
+                        </div>
+                        <div style={{ background: "rgba(100,40,140,0.1)", border: "1px solid rgba(140,70,180,0.2)", borderRadius: 6, padding: "11px 13px" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 7 }}>
+                            <span style={{ fontSize: 10, color: "#b070d0", fontFamily: mono }}>🎬 MOTION PROMPT (Grok)</span>
+                            <CopyBtn text={scene.video_motion_prompt} id={`vid-${scene.id}`} />
+                          </div>
+                          <p style={{ margin: 0, fontSize: 12, color: "#c0a0d8", lineHeight: 1.65 }}>{scene.video_motion_prompt}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Social Tab */}
+                {activeTab === "social" && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                    {result.thumbnail_text && (
+                      <div style={{ background: "rgba(255,180,0,0.08)", border: "1px solid rgba(255,180,0,0.3)", borderRadius: 8, padding: "16px 18px" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                          <span style={{ fontSize: 9, color: "#d4a040", fontFamily: mono, letterSpacing: "0.1em" }}>🎨 THUMBNAIL TEXT</span>
+                          <CopyBtn text={result.thumbnail_text} id="thumb" />
+                        </div>
+                        <p style={{ margin: 0, fontSize: 16, lineHeight: 1.4, color: "#ffc060", fontWeight: "bold" }}>{result.thumbnail_text}</p>
+                      </div>
+                    )}
+                    <div style={{ background: "rgba(0,0,0,0.3)", border: `1px solid ${border}`, borderRadius: 8, padding: "16px 18px" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                        <span style={{ fontSize: 9, color: dim, fontFamily: mono, letterSpacing: "0.1em" }}>📱 FACEBOOK CAPTION</span>
+                        <CopyBtn text={result.facebook_caption} id="caption" />
+                      </div>
+                      <p style={{ margin: 0, fontSize: 14, lineHeight: 1.85, color: "#c0b89a", whiteSpace: "pre-wrap" }}>{result.facebook_caption}</p>
+                    </div>
+                    <div style={{ background: "rgba(0,0,0,0.3)", border: `1px solid ${border}`, borderRadius: 8, padding: "16px 18px" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                        <span style={{ fontSize: 9, color: dim, fontFamily: mono, letterSpacing: "0.1em" }}># HASHTAGS</span>
+                        <CopyBtn text={result.tags?.join(" ")} id="tags" />
+                      </div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                        {result.tags?.map((tag, i) => (
+                          <span
+                            key={i}
+                            onClick={() => copy(tag, `tag-${i}`)}
+                            style={{ background: "rgba(201,168,76,0.07)", border: `1px solid ${border}`, borderRadius: 4, padding: "4px 10px", fontSize: 11, color: gold, fontFamily: mono, cursor: "pointer" }}
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
